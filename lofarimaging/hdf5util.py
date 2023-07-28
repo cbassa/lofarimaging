@@ -15,7 +15,8 @@ obs000001          A group per observation (numbering is arbitrary)
 Per observation, the following attributes are used:
  * frequency       Frequency in Hz
  * obstime         Observation time (UTC)
- * rcu_mode        RCU mode
+ * band            Filter selection (e.g. 10_90)
+ * antenna_set     Antenna selection (e.g. LBA_INNER)
  * station_name    Station name, e.g. CS103
  * subband         Subband
 
@@ -63,8 +64,8 @@ def get_new_obsname(h5file: h5py.File):
 
 
 def write_hdf5(filename: str, xst_data: np.ndarray, visibilities: np.ndarray, sky_img: np.ndarray,
-               ground_img: np.ndarray, station_name: str, subband: int, rcu_mode: int, frequency: float,
-               obstime: datetime.datetime, extent: List[float], extent_lonlat: List[float],
+               ground_img: np.ndarray, station_name: str, subband: int, band: str, antenna_set: str,
+               frequency: float, obstime: datetime.datetime, extent: List[float], extent_lonlat: List[float],
                height: float, bodies_lmn: Dict[str, Tuple[float]], calibration_info: Dict[str, str],
                subtracted: List[str]):
     """
@@ -78,7 +79,8 @@ def write_hdf5(filename: str, xst_data: np.ndarray, visibilities: np.ndarray, sk
         ground_img (np.ndarray): Ground image as array
         station_name (str): Station name
         subband (int): Subband number
-        rcu_mode (int): RCU mode
+        band (str): Filter selection
+        antenna_set (str): Antenna selection
         frequency (float): Frequency
         obstime (datetime.datetime): Time of observation
         extent (List[float]): Extent of ground image in XY coordinates around station center
@@ -95,7 +97,7 @@ def write_hdf5(filename: str, xst_data: np.ndarray, visibilities: np.ndarray, sk
         >>> xst_data = visibilities = np.ones((96, 96), dtype=np.complex)
         >>> ground_img = sky_img = np.ones((131, 131), dtype=np.float)
         >>> write_hdf5("test/test.h5", xst_data, visibilities, sky_img, ground_img, "DE603", \
-                       297, 3, 150e6, datetime.datetime.now(), [-150, 150, -150, 150], \
+                       297, "110_190", "HBA", 150e6, datetime.datetime.now(), [-150, 150, -150, 150], \
                        [11.709, 11.713, 50.978, 50.981], 1.5, {'Cas A': (0.3, 0.5, 0.2)}, \
                        {'CalTableHeader.Calibration.Date': '20181214'}, ["Cas A", "Sun"])
     """
@@ -108,7 +110,8 @@ def write_hdf5(filename: str, xst_data: np.ndarray, visibilities: np.ndarray, sk
         new_obsname = get_new_obsname(h5file)
         obs_group = h5file.create_group(new_obsname)
         obs_group.attrs["obstime"] = str(obstime)[:19]
-        obs_group.attrs["rcu_mode"] = rcu_mode
+        obs_group.attrs["band"] = band
+        obs_group.attrs["antenna_set"] = antenna_set
         obs_group.attrs["frequency"] = frequency
         obs_group.attrs["subband"] = subband
         obs_group.attrs["station_name"] = short_station_name
@@ -172,7 +175,8 @@ def merge_hdf5(src_filename: str, dest_filename: str, obslist: List[str] = None)
 def get_obsnums(h5file: h5py.File,
                 start_date: datetime.datetime = None,
                 end_date: datetime.datetime = None,
-                rcu_modes: List[int] = None,
+                bands: List[str] = None,
+                antenna_sets: List[str] = None,
                 station_name: str = None,
                 subband: int = None,
                 extent: List[int] = None) -> List[str]:
@@ -187,7 +191,9 @@ def get_obsnums(h5file: h5py.File,
                 continue
             if end_date is not None and obsdate > end_date:
                 continue
-        if rcu_modes is not None and h5file[obs].attrs["rcu_mode"] not in rcu_modes:
+        if bands is not None and h5file[obs].attrs["band"] not in bands:
+            continue
+        if antenna_sets is not None and h5file[obs].attrs["antenna_set"] not in antenna_sets:
             continue
         if station_name is not None and h5file[obs].attrs["station_name"] != station_name:
             continue
