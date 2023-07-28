@@ -712,7 +712,7 @@ def make_xst_plots(xst_data: np.ndarray,
     obstime_astropy = Time(obstime)
     # Determine positions of Cas A and Cyg A
     station_earthlocation = EarthLocation.from_geocentric(*(db.phase_centres[station_name] * u.m))
-    zenith = AltAz(az=0 * u.deg, alt=90 * u.deg, obstime=obstime_astropy,
+    zenith = SkyCoord(az=0 * u.deg, alt=90 * u.deg, frame="altaz", obstime=obstime_astropy,
                    location=station_earthlocation).transform_to(GCRS)
 
     marked_bodies = {
