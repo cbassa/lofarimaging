@@ -32,10 +32,10 @@ from .lofarimaging import nearfield_imager, sky_imager, skycoord_to_lmn, subtrac
 from .hdf5util import write_hdf5
 
 
-__all__ = ["sb_from_freq", "freq_from_sb", "find_caltable", "read_caltable",
+__all__ = ["decode_rcu_mode", "sb_from_freq", "freq_from_sb", "find_caltable", "read_caltable",
            "rcus_in_station", "read_acm_cube", "get_station_pqr", "get_station_xyz", "get_station_type",
            "make_sky_plot", "make_ground_plot", "make_xst_plots", "apply_calibration",
-           "get_full_station_name", "get_extent_lonlat", "make_sky_movie", "reimage_sky"]
+           "get_full_station_name", "get_extent_lonlat", "make_sky_movie", "reimage_sky", "reimage_nearfield"]
 
 __version__ = "1.5.0"
 
@@ -52,86 +52,277 @@ GENERIC_REMOTE_201512 = [0, 13, 12, 4, 11, 11, 7, 8, 2, 7, 11, 2, 10, 2, 6, 3, 8
 assert version.parse(lofarantpos.__version__) >= version.parse("0.4.0")
 
 
-def sb_from_freq(freq: float, rcu_mode: Union[int, str] = 1) -> int:
+def decode_rcu_mode(rcu_mode: Union[str, int], station_type: str):
+    """
+    Decode rcu_mode variable into the filter band and antenna set.
+
+    Args:
+        rcu_mode: RCU Mode (1 - 7, can be string)
+        station_type: type of station (core, remote, international)
+
+    Returns:
+        band: filter band
+        antenna_set: set of active antennas
+    
+    Example:
+        >>> band, antenna_set = decode_rcu_mode(3)
+        >>> band
+        10_90
+        >>>> antenna_set
+        LBA_INNER
+    """
+    if str(rcu_mode) == '1':
+        band, antenna_set = "10_90", "LBA_OUTER"
+    elif str(rcu_mode) == '2':
+        band, antenna_set = "30_90", "LBA_OUTER"
+    elif str(rcu_mode) == '3':
+        band, antenna_set = "10_90", "LBA_INNER"
+    elif str(rcu_mode) == '4':
+        band, antenna_set = "30_90", "LBA_INNER"
+    elif str(rcu_mode) == '5':
+        band, antenna_set = "110_190", "HBA"
+    elif str(rcu_mode) == '6':
+        band, antenna_set = "170_230", "HBA"
+    elif str(rcu_mode) == '7':
+        band, antenna_set = "210_250", "HBA"
+    else:
+        band, antenna_set = None, None
+
+    if station_type == "intl":
+        antenna_set = antenna_set[0:3]
+        
+    return band, antenna_set
+
+
+def sb_from_freq(freq: float, band: str) -> int:
     """
     Convert subband number to central frequency
 
     Args:
-        rcu_mode: rcu mode
         freq: frequency in Hz
+        band: filter band
 
     Returns:
         int: subband number
 
     Example:
-        >>> sb_from_freq(58007812.5, '3')
+        >>> sb_from_freq(58007812.5, '10_90')
         297
     """
-    clock = 200e6
-    if int(rcu_mode) == 6:
-        clock = 160e6
-
-    freq_offset = 0
-    if int(rcu_mode) == 5:
-        freq_offset = 100e6
-    elif int(rcu_mode) == 6:
-        freq_offset = 160e6
-    elif int(rcu_mode) == 7:
-        freq_offset = 200e6
+    if band not in ["10_90", "30_90", "110_190", "170_230", "210_250"]:
+        return None
+    
+    if band == "10_90" or band == "30_90":
+        clock, zone = 200e6, 1
+    elif band == "110_190":
+        clock, zone = 200e6, 2
+    elif band == "170_230":
+        clock, zone = 160e6, 3
+    elif band == "210_250":
+        clock, zone = 200e6, 3
 
     sb_bandwidth = 0.5 * clock / 512.
+    freq_offset = 0.5 * clock * (zone - 1)
     sb = round((freq - freq_offset) / sb_bandwidth)
     return int(sb)
 
 
-def freq_from_sb(sb: int, rcu_mode: Union[str, int] = 1):
+def freq_from_sb(sb: int, band: str) -> float:
     """
     Convert central frequency to subband number
 
     Args:
-        rcu_mode: rcu mode
         sb: subband number
+        band: filter band
 
     Returns:
         float: frequency in Hz
 
     Example:
-        >>> freq_from_sb(297, '3')
+        >>> freq_from_sb(297, '30_90')
         58007812.5
     """
-    clock = 200e6
-    freq_offset = 0
-
-    if 'sparse' not in str(rcu_mode):
-        if int(rcu_mode) == 6:
-            clock = 160e6
-
-        if int(rcu_mode) == 5:
-            freq_offset = 100e6
-        elif int(rcu_mode) == 6:
-            freq_offset = 160e6
-        elif int(rcu_mode) == 7:
-            freq_offset = 200e6
+    if band not in ["10_90", "30_90", "110_190", "170_230", "210_250"]:
+        return None
+    
+    if band == "10_90" or band == "30_90":
+        clock, zone = 200e6, 1
+    elif band == "110_190":
+        clock, zone = 200e6, 2
+    elif band == "170_230":
+        clock, zone = 160e6, 3
+    elif band == "210_250":
+        clock, zone = 200e6, 3
 
     sb_bandwidth = 0.5 * clock / 512.
+    freq_offset = 0.5 * clock * (zone -1)
     freq = (sb * sb_bandwidth) + freq_offset
     return freq
 
 
-def find_caltable(field_name: str, rcu_mode: Union[str, int], caltable_dir='caltables'):
+def get_full_station_name(station_name: str, antenna_set: str) -> str:
+    """
+    Get full station name with the field appended, e.g. DE603LBA
+
+    Args:
+        station_name (str): Short station name, e.g. 'DE603'
+        antenna_set (str): antenna_set, e.g. LBA_OUTER
+
+    Returns:
+        str: Full station name, e.g. DE603LBA
+
+    Example:
+        >>> get_full_station_name("DE603", 'LBA_INNER')
+        'DE603LBA'
+
+        >>> get_full_station_name("LV614", 'HBA')
+        'LV614HBA'
+
+        >>> get_full_station_name("CS013LBA", 'LBA_OUTER')
+        'CS013LBA'
+
+        >>> get_full_station_name("CS002", 'LBA_OUTER')
+        'CS002LBA'
+    """
+    if len(station_name) > 5:
+        return station_name
+    elif antenna_set[0:3] in ["LBA", "HBA"]:
+        station_name += antenna_set[0:3]
+
+    return station_name
+
+def get_station_type(station_name: str) -> str:
+    """
+    Get the station type, one of 'intl', 'core' or 'remote'
+
+    Args:
+        station_name: Station name, e.g. "DE603LBA" or just "DE603"
+
+    Returns:
+        str: station type, one of 'intl', 'core' or 'remote'
+
+    Example:
+        >>> get_station_type("DE603")
+        'intl'
+    """
+    if station_name[0] == "C":
+        return "core"
+    elif station_name[0] == "R" or station_name[:5] == "PL611":
+        return "remote"
+    else:
+        return "intl"
+
+
+
+def get_station_pqr(station_name: str, antenna_set: str, db):
+    """
+    Get PQR coordinates for the relevant subset of antennas in a station.
+
+    Args:
+        station_name: Station name, e.g. 'DE603LBA' or 'DE603'
+        antenna_set: antenna_set, e.g. LBA_INNER
+        db: instance of LofarAntennaDatabase from lofarantpos
+
+    Example:
+        >>> from lofarantpos.db import LofarAntennaDatabase
+        >>> db = LofarAntennaDatabase()
+        >>> pqr = get_station_pqr("DE603", "LBA_OUTER", db)
+        >>> pqr.shape
+        (96, 3)
+        >>> pqr[0, 0]
+        1.7434713
+
+        >>> pqr = get_station_pqr("LV614", "HBA", db)
+        >>> pqr.shape
+        (96, 3)
+    """
+    full_station_name = get_full_station_name(station_name, antenna_set)
+    station_type = get_station_type(full_station_name)
+    print(full_station_name, station_type)
+
+    all_pqr = db.antenna_pqr(full_station_name)
+    if "LBA" in antenna_set:
+        if antenna_set == "LBA_OUTER":
+            station_pqr = all_pqr[48:, :]
+        elif antenna_set == "LBA_INNER":
+            station_pqr = all_pqr[:48, :]
+        elif antenna_set == "LBA_SPARSE_EVEN":
+            station_pqr = np.ravel(np.column_stack((all_pqr[:48:2], all_pqr[49::2]))).reshape(48, 3)
+        elif antenna_set == "LBA_SPARSE_ODD":
+            station_pqr = np.ravel(np.column_stack((all_pqr[1:48:2], all_pqr[48::2]))).reshape(48, 3)
+        else:
+            station_pqr = all_pqr
+    elif "HBA" in antenna_set:
+        if antenna_set == "HBA":
+            selected_dipole_config = {
+                'intl': GENERIC_INT_201512, 'remote': GENERIC_REMOTE_201512, 'core': GENERIC_CORE_201512
+            }
+            selected_dipoles = selected_dipole_config[station_type] + \
+                np.arange(len(selected_dipole_config[station_type])) * 16
+            station_pqr = db.hba_dipole_pqr(full_station_name)[selected_dipoles]
+        else:
+            station_pqr = all_pqr
+        
+    return station_pqr.astype('float32')
+
+def get_station_xyz(station_name: str, antenna_set: str, db):
+    """
+    Get XYZ coordinates for the relevant subset of antennas in a station.
+    The XYZ system is defined as the PQR system rotated along the R axis to make
+    the Q-axis point towards local north.
+
+    Args:
+        station_name: Station name, e.g. 'DE603LBA' or 'DE603'
+        antenna_set: antenna_set, e.g. LBA_OUTER
+        db: instance of LofarAntennaDatabase from lofarantpos
+
+    Returns:
+        np.array: Antenna xyz, shape [n_ant, 3]
+        np.array: rotation matrix pqr_to_xyz, shape [3, 3]
+
+    Example:
+        >>> from lofarantpos.db import LofarAntennaDatabase
+        >>> db = LofarAntennaDatabase()
+        >>> xyz, _ = get_station_xyz("DE603", "LBA_OUTER", db)
+        >>> xyz.shape
+        (96, 3)
+        >>> f"{xyz[0, 0]:.7f}"
+        '2.7033776'
+
+        >>> xyz, _ = get_station_xyz("LV614", "HBA", db)
+        >>> xyz.shape
+        (96, 3)
+    """
+    station_pqr = get_station_pqr(station_name, antenna_set, db)
+
+    station_name = get_full_station_name(station_name, antenna_set)
+
+    rotation = db.rotation_from_north(station_name)
+
+    pqr_to_xyz = np.array([[np.cos(-rotation), -np.sin(-rotation), 0],
+                           [np.sin(-rotation), np.cos(-rotation), 0],
+                           [0, 0, 1]])
+
+    station_xyz = (pqr_to_xyz @ station_pqr.T).T
+
+    return station_xyz, pqr_to_xyz
+
+
+def find_caltable(field_name: str, band: str, antenna_set: str, caltable_dir='caltables'):
     """
     Find the file of a caltable.
 
     Args:
         field_name: Name of the antenna field, e.g. 'DE602LBA' or 'DE602'
-        rcu_mode: Receiver mode for which the calibration table is requested.
+        antenna_set: antenna_set, e.g. LBA_OUTER
+        band: filter band, e.g. 10_90
         caltable_dir: Root directory under which station information is stored in
             subdirectories DE602C/etc/, RS106/etc/, ...
     Returns:
         str: full path to caltable if it exists, None if nothing found
 
     Example:
-        >>> find_caltable("DE603LBA", "3", caltable_dir="test/CalTables")
+        >>> find_caltable("DE603LBA", "LBA_INNER", "10_90", caltable_dir="test/CalTables")
         'test/CalTables/DE603/CalTable-603-LBA_INNER-10_90.dat'
 
         >>> find_caltable("ES615HBA", "5") is None
@@ -140,25 +331,12 @@ def find_caltable(field_name: str, rcu_mode: Union[str, int], caltable_dir='calt
     station, field = field_name[0:5].upper(), field_name[5:].upper()
     station_number = station[2:5]
 
-    filename = f"CalTable-{station_number}"
+    # Override LBA to LBA_INNER for international stations
+    if antenna_set == "LBA":
+        antenna_set = "LBA_INNER"
 
-    if str(rcu_mode) in ('outer', '1', '2'):
-        filename += "-LBA_OUTER-10_90.dat"
-    elif str(rcu_mode) in ('inner', '3', '4'):
-        filename += "-LBA_INNER-10_90.dat"
-    elif str(rcu_mode) == '5':
-        filename += "-HBA-110_190.dat"
-    elif str(rcu_mode) == '6':
-        filename += "-HBA-170_230.dat"
-    elif str(rcu_mode) == '7':
-        filename += "-HBA-210_250.dat"
-    elif str(rcu_mode) == 'sparse_even':
-        filename += "-LBA_SPARSE_EVEN-10_90.dat"
-    elif str(rcu_mode) == 'sparse_odd':
-        filename += "-LBA_SPARSE_ODD-10_90.dat"
-    else:
-        raise RuntimeError("Unexpected mode: " + str(rcu_mode) + " for field_name " + str(field_name))
-
+    # Create filename
+    filename = f"CalTable-{station_number}-{antenna_set}-{band}.dat"
     if os.path.exists(os.path.join(caltable_dir, filename)):
         # All caltables in one directory
         return os.path.join(caltable_dir, filename)
@@ -207,7 +385,7 @@ def read_caltable(filename: str, num_subbands=512) -> Tuple[Dict[str, str], np.n
     return header_dict, caldata.reshape((num_subbands, num_rcus))
 
 
-def apply_calibration(visibilities: np.ndarray, station_name: str, rcu_mode: Union[str, int],
+def apply_calibration(visibilities: np.ndarray, station_name: str, band: str, antenna_set: str,
                       subband: int, caltable_dir: str = "CalTables"):
     """
     Apply calibration to visibilities
@@ -215,19 +393,21 @@ def apply_calibration(visibilities: np.ndarray, station_name: str, rcu_mode: Uni
     Args:
         visibilities (np.ndarray): Visibility cube
         station_name (str): Station name, e.g. "DE603"
-        rcu_mode (Union[str, int]): RCU mode, e.g. 5
+        antenna_set: antenna_set, e.g. LBA_OUTER
+        band: filter band, e.g. 10_90
         subband (int): Subband
         caltable_dir (str, optional): Directory with calibration tables. Defaults to "CalTables".
 
     Returns:
         Tuple[np.ndarray, Dict[str, str]]: modified visibilities and dictionary with calibration info
     """
-    caltable_filename = find_caltable(station_name, rcu_mode=rcu_mode,
+    caltable_filename = find_caltable(station_name, band=band, antenna_set=antenna_set,
                                       caltable_dir=caltable_dir)
     cal_header = {}
     if caltable_filename is None:
         print('No calibration table found... cube remains uncalibrated!')
     else:
+        print(f'Using {caltable_filename} for calibration')
         cal_header, cal_data = read_caltable(caltable_filename)
 
         rcu_gains = cal_data[subband, :]
@@ -274,127 +454,6 @@ def read_acm_cube(filename: str, station_type: str):
     data = np.fromfile(filename, dtype=np.complex128)
     time_slots = int(len(data) / num_rcu / num_rcu)
     return data.reshape((time_slots, num_rcu, num_rcu))
-
-
-def get_station_type(station_name: str) -> str:
-    """
-    Get the station type, one of 'intl', 'core' or 'remote'
-
-    Args:
-        station_name: Station name, e.g. "DE603LBA" or just "DE603"
-
-    Returns:
-        str: station type, one of 'intl', 'core' or 'remote'
-
-    Example:
-        >>> get_station_type("DE603")
-        'intl'
-    """
-    if station_name[0] == "C":
-        return "core"
-    elif station_name[0] == "R" or station_name[:5] == "PL611":
-        return "remote"
-    else:
-        return "intl"
-
-
-def get_station_pqr(station_name: str, rcu_mode: Union[str, int], db):
-    """
-    Get PQR coordinates for the relevant subset of antennas in a station.
-
-    Args:
-        station_name: Station name, e.g. 'DE603LBA' or 'DE603'
-        rcu_mode: RCU mode (0 - 6, can be string)
-        db: instance of LofarAntennaDatabase from lofarantpos
-
-    Example:
-        >>> from lofarantpos.db import LofarAntennaDatabase
-        >>> db = LofarAntennaDatabase()
-        >>> pqr = get_station_pqr("DE603", "outer", db)
-        >>> pqr.shape
-        (96, 3)
-        >>> pqr[0, 0]
-        1.7434713
-
-        >>> pqr = get_station_pqr("LV614", "5", db)
-        >>> pqr.shape
-        (96, 3)
-    """
-    full_station_name = get_full_station_name(station_name, rcu_mode)
-    station_type = get_station_type(full_station_name)
-
-    if 'LBA' in station_name or str(rcu_mode) in ('1', '2', '3', '4', 'inner', 'outer', 'sparse_even', 'sparse_odd', 'sparse'):
-        if (station_type == 'core' or station_type == 'remote'):
-            if str(rcu_mode) in ('3', '4', 'inner'):
-                station_pqr = db.antenna_pqr(full_station_name)[0:48, :]
-            elif str(rcu_mode) in ('1', '2', 'outer'):
-                station_pqr = db.antenna_pqr(full_station_name)[48:, :]
-            elif rcu_mode in ('sparse_even', 'sparse'):
-                all_pqr = db.antenna_pqr(full_station_name)
-                # Indices 0, 49, 2, 51, 4, 53, ...
-                station_pqr = np.ravel(np.column_stack((all_pqr[:48:2], all_pqr[49::2]))).reshape(48, 3)
-            elif rcu_mode == 'sparse_odd':
-                all_pqr = db.antenna_pqr(full_station_name)
-                # Indices 1, 48, 3, 50, 5, 52, ...
-                station_pqr = np.ravel(np.column_stack((all_pqr[1:48:2], all_pqr[48::2]))).reshape(48, 3)
-            else:
-                raise RuntimeError("Cannot select subset of LBA antennas for mode " + rcu_mode)
-        else:
-            station_pqr = db.antenna_pqr(full_station_name)
-    elif 'HBA' in station_name or str(rcu_mode) in ('5', '6', '7', '8'):
-        selected_dipole_config = {
-            'intl': GENERIC_INT_201512, 'remote': GENERIC_REMOTE_201512, 'core': GENERIC_CORE_201512
-        }
-        selected_dipoles = selected_dipole_config[station_type] + \
-            np.arange(len(selected_dipole_config[station_type])) * 16
-        station_pqr = db.hba_dipole_pqr(full_station_name)[selected_dipoles]
-    else:
-        raise RuntimeError("Station name did not contain LBA or HBA, could not load antenna positions")
-
-    return station_pqr.astype('float32')
-
-
-def get_station_xyz(station_name: str, rcu_mode: Union[str, int], db):
-    """
-    Get XYZ coordinates for the relevant subset of antennas in a station.
-    The XYZ system is defined as the PQR system rotated along the R axis to make
-    the Q-axis point towards local north.
-
-    Args:
-        station_name: Station name, e.g. 'DE603LBA' or 'DE603'
-        rcu_mode: RCU mode (0 - 6, can be string)
-        db: instance of LofarAntennaDatabase from lofarantpos
-
-    Returns:
-        np.array: Antenna xyz, shape [n_ant, 3]
-        np.array: rotation matrix pqr_to_xyz, shape [3, 3]
-
-    Example:
-        >>> from lofarantpos.db import LofarAntennaDatabase
-        >>> db = LofarAntennaDatabase()
-        >>> xyz, _ = get_station_xyz("DE603", "outer", db)
-        >>> xyz.shape
-        (96, 3)
-        >>> f"{xyz[0, 0]:.7f}"
-        '2.7033776'
-
-        >>> xyz, _ = get_station_xyz("LV614", "5", db)
-        >>> xyz.shape
-        (96, 3)
-    """
-    station_pqr = get_station_pqr(station_name, rcu_mode, db)
-
-    station_name = get_full_station_name(station_name, rcu_mode)
-
-    rotation = db.rotation_from_north(station_name)
-
-    pqr_to_xyz = np.array([[np.cos(-rotation), -np.sin(-rotation), 0],
-                           [np.sin(-rotation), np.cos(-rotation), 0],
-                           [0, 0, 1]])
-
-    station_xyz = (pqr_to_xyz @ station_pqr.T).T
-
-    return station_xyz, pqr_to_xyz
 
 
 def make_ground_plot(image: np.ndarray, background_map: np.ndarray, extent: List[float], title: str = "Ground plot",
@@ -536,46 +595,6 @@ def make_sky_plot(image: np.ndarray, marked_bodies_lmn: Dict[str, Tuple[float, f
     return fig
 
 
-def get_full_station_name(station_name: str, rcu_mode: Union[str, int]) -> str:
-    """
-    Get full station name with the field appended, e.g. DE603LBA
-
-    Args:
-        station_name (str): Short station name, e.g. 'DE603'
-        rcu_mode (Union[str, int]): RCU mode
-
-    Returns:
-        str: Full station name, e.g. DE603LBA
-
-    Example:
-        >>> get_full_station_name("DE603", '3')
-        'DE603LBA'
-
-        >>> get_full_station_name("LV614", 5)
-        'LV614HBA'
-
-        >>> get_full_station_name("CS013LBA", 1)
-        'CS013LBA'
-
-        >>> get_full_station_name("CS002", 1)
-        'CS002LBA'
-    """
-    if len(station_name) > 5:
-        return station_name
-
-    if str(rcu_mode) in ('1', '2', 'outer'):
-        station_name += "LBA"
-    elif str(rcu_mode) in ('3', '4', 'inner'):
-        station_name += "LBA"
-    elif 'sparse' in str(rcu_mode):
-        station_name += "LBA"
-    elif str(rcu_mode) in ('5', '6', '7'):
-        station_name += "HBA"
-    else:
-        raise Exception("Unexpected rcu_mode: ", rcu_mode)
-
-    return station_name
-
 
 def get_extent_lonlat(extent_m: List[int],
                       full_station_name: str,
@@ -609,7 +628,8 @@ def make_xst_plots(xst_data: np.ndarray,
                    station_name: str,
                    obstime: datetime.datetime,
                    subband: int,
-                   rcu_mode: int,
+                   band: str,
+                   antenna_set: str,
                    caltable_dir: str = "CalTables",
                    extent: List[float] = None,
                    pixels_per_metre: float = 0.5,
@@ -632,7 +652,8 @@ def make_xst_plots(xst_data: np.ndarray,
         station_name: Full station name, e.g. "DE603LBA"
         obstime: Observation time as a datetime object
         subband: Subband number
-        rcu_mode: RCU mode
+        band: filter selection (e.g. 10_90)
+        antenna_set: antenna selection (e.g. LBA_INNER)
         caltable_dir: Caltable directory. Defaults to "CalTables".
         extent: Extent (in m) for ground image. Defaults to [-150, 150, -150, 150]
         pixels_per_metre: Pixels per metre. Defaults to 0.5.
@@ -685,12 +706,12 @@ def make_xst_plots(xst_data: np.ndarray,
     fname = f"{obstime:%Y%m%d}_{obstime:%H%M%S}_{station_name}_SB{subband}"
 
     npix_l, npix_m = 131, 131
-    freq = freq_from_sb(subband, rcu_mode=rcu_mode)
+    freq = freq_from_sb(subband, band=band)
 
     # For ground imaging
     ground_resolution = pixels_per_metre  # pixels per metre for ground_imaging, default is 0.5 pixel/metre
 
-    visibilities, calibration_info = apply_calibration(xst_data, station_name, rcu_mode, subband,
+    visibilities, calibration_info = apply_calibration(xst_data, station_name, band, antenna_set, subband,
                                                        caltable_dir=caltable_dir)
 
     # Split into the XX and YY polarisations (RCUs)
@@ -703,9 +724,9 @@ def make_xst_plots(xst_data: np.ndarray,
     # Setup the database
     db = LofarAntennaDatabase()
 
-    station_xyz, pqr_to_xyz = get_station_xyz(station_name, rcu_mode, db)
+    station_xyz, pqr_to_xyz = get_station_xyz(station_name, antenna_set, db)
 
-    station_name = get_full_station_name(station_name, rcu_mode)
+    station_name = get_full_station_name(station_name, antenna_set)
 
     baselines = station_xyz[:, np.newaxis, :] - station_xyz[np.newaxis, :, :]
 
@@ -814,7 +835,7 @@ def make_xst_plots(xst_data: np.ndarray,
 
     leaflet_map = make_leaflet_map(folium_overlay, lon_center, lat_center, lon_min, lat_min, lon_max, lat_max)
 
-    write_hdf5(hdf5_filename, xst_data, visibilities, sky_img, ground_img, station_name, subband, rcu_mode,
+    write_hdf5(hdf5_filename, xst_data, visibilities, sky_img, ground_img, station_name, subband, band, antenna_set,
                freq, obstime, extent, extent_lonlat, height, marked_bodies_lmn, calibration_info, subtract)
 
     return sky_fig, ground_fig, leaflet_map
@@ -825,6 +846,7 @@ def make_sky_movie(moviefilename: str, h5file: h5py.File, obsnums: List[str], vm
     """
     Make movie of a list of observations
     """
+
     fig = plt.figure(figsize=(10,10))
     for obsnum in tqdm.tqdm(obsnums):
         obs_h5 = h5file[obsnum]
@@ -871,7 +893,8 @@ def reimage_sky(h5: h5py.File, obsnum: str, db: lofarantpos.db.LofarAntennaDatab
     station_name = h5[obsnum].attrs['station_name']
     subband = h5[obsnum].attrs['subband']
     obstime = h5[obsnum].attrs['obstime']
-    rcu_mode = h5[obsnum].attrs['rcu_mode']
+    band = h5[obsnum].attrs['band']
+    antenna_set = h5[obsnum].attrs['antenna_set']    
     sky_data = h5[obsnum]["sky_img"]
     freq = h5[obsnum].attrs['frequency']
     marked_bodies_lmn = dict(zip(h5[obsnum].attrs["source_names"], h5[obsnum].attrs["source_lmn"]))
@@ -882,7 +905,7 @@ def reimage_sky(h5: h5py.File, obsnum: str, db: lofarantpos.db.LofarAntennaDatab
     visibilities_stokes_i = visibilities_xx + visibilities_yy
 
     if subtract is not None:
-        station_xyz, _ = get_station_xyz(station_name, rcu_mode, db)
+        station_xyz, _ = get_station_xyz(station_name, antenna_set, db)
         baselines = station_xyz[:, np.newaxis, :] - station_xyz[np.newaxis, :, :]
         visibilities_stokes_i = subtract_sources(visibilities_stokes_i, baselines, freq, marked_bodies_lmn, subtract)
         sky_data = sky_imager(visibilities_stokes_i, baselines, freq, sky_data.shape[0], sky_data.shape[1])
@@ -921,7 +944,8 @@ def reimage_nearfield(h5: h5py.File, obsnum: str, db: lofarantpos.db.LofarAntenn
     station_name = h5[obsnum].attrs['station_name']
     subband = h5[obsnum].attrs['subband']
     obstime = h5[obsnum].attrs['obstime']
-    rcu_mode = h5[obsnum].attrs['rcu_mode']
+    band = h5[obsnum].attrs['band']
+    antenna_set = h5[obsnum].attrs['antenna_set']
     freq = h5[obsnum].attrs['frequency']
     marked_bodies_lmn = dict(zip(h5[obsnum].attrs["source_names"], h5[obsnum].attrs["source_lmn"]))
     visibilities = h5[obsnum]['calibrated_data'][:]
@@ -931,21 +955,21 @@ def reimage_nearfield(h5: h5py.File, obsnum: str, db: lofarantpos.db.LofarAntenn
     visibilities_stokes_i = visibilities_xx + visibilities_yy
 
     if subtract is not None:
-        station_xyz, _ = get_station_xyz(station_name, rcu_mode, db)
+        station_xyz, _ = get_station_xyz(station_name, antenna_set, db)
         baselines = station_xyz[:, np.newaxis, :] - station_xyz[np.newaxis, :, :]
         visibilities_stokes_i = subtract_sources(visibilities_stokes_i, baselines, freq, marked_bodies_lmn, subtract)
 
     baseline_indices = np.tril_indices(visibilities_stokes_i.shape[0])
     visibilities_selection = visibilities_stokes_i[baseline_indices]
 
-    extent_lonlat = get_extent_lonlat(extent, get_full_station_name(station_name, h5[obsnum].attrs['rcu_mode']), db)
+    extent_lonlat = get_extent_lonlat(extent, get_full_station_name(station_name, h5[obsnum].attrs['antenna_set']), db)
 
     background_map = get_map(*extent_lonlat, 14)
 
     ground_img = nearfield_imager(visibilities_selection.flatten()[:, np.newaxis],
                                   np.array(baseline_indices).T, [freq],
                                   600, 600, extent,
-                                  get_station_pqr(h5[obsnum].attrs["station_name"], h5[obsnum].attrs["rcu_mode"], db))
+                                  get_station_pqr(h5[obsnum].attrs["station_name"], h5[obsnum].attrs["antenna_set"], db))
     ground_img = np.real(2 * ground_img)
 
     fig, folium_overlay = make_ground_plot(ground_img, background_map, extent, draw_contours=False, opacity=0.3,
