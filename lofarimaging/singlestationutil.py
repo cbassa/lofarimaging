@@ -238,7 +238,6 @@ def get_station_pqr(station_name: str, antenna_set: str, db):
     """
     full_station_name = get_full_station_name(station_name, antenna_set)
     station_type = get_station_type(full_station_name)
-    print(full_station_name, station_type)
 
     all_pqr = db.antenna_pqr(full_station_name)
     if "LBA" in antenna_set:
@@ -253,13 +252,22 @@ def get_station_pqr(station_name: str, antenna_set: str, db):
         else:
             station_pqr = all_pqr
     elif "HBA" in antenna_set:
-        if antenna_set == "HBA":
-            selected_dipole_config = {
-                'intl': GENERIC_INT_201512, 'remote': GENERIC_REMOTE_201512, 'core': GENERIC_CORE_201512
-            }
-            selected_dipoles = selected_dipole_config[station_type] + \
-                np.arange(len(selected_dipole_config[station_type])) * 16
-            station_pqr = db.hba_dipole_pqr(full_station_name)[selected_dipoles]
+        selected_dipole_config = {
+            'intl': GENERIC_INT_201512, 'remote': GENERIC_REMOTE_201512, 'core': GENERIC_CORE_201512
+        }
+        selected_dipoles = selected_dipole_config[station_type] + \
+            np.arange(len(selected_dipole_config[station_type])) * 16
+        single_dipole_pqr = db.hba_dipole_pqr(full_station_name)[selected_dipoles]
+        if antenna_set == "HBA_SINGLE":
+            station_pqr = single_dipole_pqr
+        elif antenna_set == "HBA0_SINGLE":
+            station_pqr = single_dipole_pqr[:24, :]
+        elif antenna_set == "HBA1_SINGLE":
+            station_pqr = single_dipole_pqr[24:, :]
+        elif antenna_set == "HBA0":
+            station_pqr = all_pqr[:24, :]
+        elif antenna_set == "HBA1":
+            station_pqr = all_pqr[24:, :]
         else:
             station_pqr = all_pqr
         
@@ -562,7 +570,7 @@ def make_sky_plot(image: np.ndarray, marked_bodies_lmn: Dict[str, Tuple[float, f
     circle1 = Circle((0, 0), 1.0, edgecolor='k', fill=False, facecolor='none', alpha=0.3)
     ax.add_artist(circle1)
 
-    cimg = ax.imshow(image, origin='lower', cmap=cm.Spectral_r, extent=(1, -1, -1, 1),
+    cimg = ax.imshow(image, origin='lower', cmap="Blues_r", extent=(1, -1, -1, 1),
                      clip_path=circle1, clip_on=True, **kwargs)
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.2, axes_class=maxes.Axes)
