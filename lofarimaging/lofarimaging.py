@@ -4,7 +4,7 @@ from typing import Dict, List
 import numpy as np
 from numpy.linalg import norm, lstsq
 import numexpr as ne
-import numba
+#import numba
 from astropy.coordinates import SkyCoord, SkyOffsetFrame, CartesianRepresentation
 
 
@@ -66,7 +66,7 @@ def sky_imager(visibilities, baselines, freq, npix_l, npix_m):
     return np.real(img)
 
 
-@numba.jit(parallel=True)
+#@numba.jit(parallel=True)
 def numba_sky_imager(visibilities, baselines, freq, npix_l, npix_m):
     """
     Sky imager
