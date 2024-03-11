@@ -125,7 +125,7 @@ def nearfield_imager(visibilities, baseline_indices, freqs, npix_p, npix_q, exte
         max_memory_mb: Maximum amount of memory to use for the biggest array. Higher may improve performance.
 
     Returns:
-        np.array(complex): Complex valued array of shape [npix_p, npix_q]
+        np.array(complex128): Complex valued array of shape [npix_p, npix_q]
     """
     z = height
     x = np.linspace(extent[0], extent[1], npix_p)
