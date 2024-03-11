@@ -65,10 +65,10 @@ def decode_rcu_mode(rcu_mode: Union[str, int], station_type: str):
         antenna_set: set of active antennas
     
     Example:
-        >>> band, antenna_set = decode_rcu_mode(3)
-        >>> band
+        >>> band, antenna_set = decode_rcu_mode(3, 'core')
+        >>> print(band)
         10_90
-        >>>> antenna_set
+        >>> print(antenna_set)
         LBA_INNER
     """
     if str(rcu_mode) == '1':
@@ -241,9 +241,9 @@ def get_station_pqr(station_name: str, antenna_set: str, db):
 
     all_pqr = db.antenna_pqr(full_station_name)
     if "LBA" in antenna_set:
-        if antenna_set == "LBA_OUTER":
+        if antenna_set == "LBA_OUTER" and station_type != 'intl':
             station_pqr = all_pqr[48:, :]
-        elif antenna_set == "LBA_INNER":
+        elif antenna_set == "LBA_INNER" and station_type != 'intl':
             station_pqr = all_pqr[:48, :]
         elif antenna_set == "LBA_SPARSE_EVEN":
             station_pqr = np.ravel(np.column_stack((all_pqr[:48:2], all_pqr[49::2]))).reshape(48, 3)
@@ -330,10 +330,10 @@ def find_caltable(field_name: str, band: str, antenna_set: str, caltable_dir='ca
         str: full path to caltable if it exists, None if nothing found
 
     Example:
-        >>> find_caltable("DE603LBA", "LBA_INNER", "10_90", caltable_dir="test/CalTables")
+        >>> find_caltable("DE603LBA", "10_90", "LBA_INNER", caltable_dir="test/CalTables")
         'test/CalTables/DE603/CalTable-603-LBA_INNER-10_90.dat'
 
-        >>> find_caltable("ES615HBA", "5") is None
+        >>> find_caltable("ES615HBA", "5", "HBA_JOINED") is None
         True
     """
     station, field = field_name[0:5].upper(), field_name[5:].upper()
@@ -508,8 +508,7 @@ def make_ground_plot(image: np.ndarray, background_map: np.ndarray, extent: List
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.2, axes_class=maxes.Axes)
     cbar = fig.colorbar(cimg, cax=cax, orientation="vertical", format="%.2e")
-    cbar.set_alpha(1.0)
-    cbar.draw_all()
+    cbar.solids.set(alpha=1.0)
     # cbar.set_ticks([])
 
     ax.set_xlabel('$W-E$ (metres)', fontsize=14)
@@ -681,9 +680,11 @@ def make_xst_plots(xst_data: np.ndarray,
         >>> xst_data = read_acm_cube("test/20170720_095816_mode_3_xst_sb297.dat", "intl")[0]
         >>> obstime = datetime.datetime(2017, 7, 20, 9, 58, 16)
         >>> sky_fig, ground_fig, leafletmap = make_xst_plots(xst_data, "DE603", obstime, 297, \
-                                                             3, caltable_dir="test/CalTables", \
+                                                             "10_90", "LBA_INNER", \
+                                                             caltable_dir="test/CalTables", \
                                                              hdf5_filename="test/test.h5", \
                                                              subtract=["Cas A", "Sun"])
+        Using test/CalTables/DE603/CalTable-603-LBA_INNER-10_90.dat for calibration
         Maximum at -6m east, 70m north of station center (lat/long 50.97998, 11.71118)
 
         >>> type(leafletmap)
@@ -692,9 +693,10 @@ def make_xst_plots(xst_data: np.ndarray,
         >>> xst_data = read_acm_cube("test/20170621_072634_sb350_xst.dat", "remote")[0]
         >>> obstime = datetime.datetime(2017, 6, 21, 7, 26, 34)
         >>> sky_fig, ground_fig, leafletmap = make_xst_plots(xst_data, "RS509", obstime, 350, \
-                                                             'sparse_even', \
+                                                             "10_90", 'LBA_SPARSE_EVEN', \
                                                              caltable_dir="test/CalTables", \
                                                              hdf5_filename="test/test.h5")
+        Using test/CalTables/RS509/CalTable-509-LBA_SPARSE_EVEN-10_90.dat for calibration
         Maximum at 2m east, -2m north of station center (lat/long 53.40884, 6.78531)
     """
     if extent is None:
